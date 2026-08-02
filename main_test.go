@@ -40,19 +40,23 @@ func TestRobotsTxt(t *testing.T) {
 	}
 }
 
-func TestFavicon(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/favicon.svg", nil)
-	rec := httptest.NewRecorder()
-	(&Server{}).routes().ServeHTTP(rec, req)
+func TestBrandAssets(t *testing.T) {
+	for _, path := range []string{"/favicon.png", "/logo.png"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			(&Server{}).routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "image/svg+xml" {
-		t.Errorf("content type = %q", ct)
-	}
-	if body := rec.Body.String(); !strings.Contains(body, "<svg") || !strings.Contains(body, "#a3e635") {
-		t.Error("favicon is missing expected SVG content")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if ct := rec.Header().Get("Content-Type"); ct != "image/png" {
+				t.Errorf("content type = %q", ct)
+			}
+			if body := rec.Body.Bytes(); len(body) < 8 || string(body[:8]) != "\x89PNG\r\n\x1a\n" {
+				t.Error("response is not a PNG")
+			}
+		})
 	}
 }
 
