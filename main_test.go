@@ -1,26 +1,60 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
 
+func TestHomePage(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	(&Server{}).routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("content type = %q", ct)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "Files in.") || !strings.Contains(body, "curl -T") {
+		t.Error("home page is missing expected content")
+	}
+}
+
+func TestRobotsTxt(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/robots.txt", nil)
+	rec := httptest.NewRecorder()
+	(&Server{}).routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, rule := range []string{"Allow: /$", "Disallow: /f/", "Disallow: /upload", "Disallow: /api/"} {
+		if !strings.Contains(body, rule) {
+			t.Errorf("robots.txt missing %q", rule)
+		}
+	}
+}
+
 func TestSanitizeFilename(t *testing.T) {
 	cases := map[string]string{
-		"video.mp4":                     "video.mp4",
-		"../etc/passwd":                 "passwd",
-		"..\\..\\win.ini":               "win.ini",
-		"my recording (final).MP4":      "my-recording-final.mp4",
-		"  spaces  .txt":                "spaces.txt",
-		".mp4":                          "file.mp4",
-		"":                              "file",
-		"---...---":                     "file",
-		"ünïcödé 😀.mov":                "n-c-d.mov",
-		"a.tar.gz":                      "a.tar.gz",
+		"video.mp4":                      "video.mp4",
+		"../etc/passwd":                  "passwd",
+		"..\\..\\win.ini":                "win.ini",
+		"my recording (final).MP4":       "my-recording-final.mp4",
+		"  spaces  .txt":                 "spaces.txt",
+		".mp4":                           "file.mp4",
+		"":                               "file",
+		"---...---":                      "file",
+		"ünïcödé 😀.mov":                  "n-c-d.mov",
+		"a.tar.gz":                       "a.tar.gz",
 		strings.Repeat("a", 100) + ".7z": strings.Repeat("a", 60) + ".7z",
-		"name.with.many.dots.png":       "name.with.many.dots.png",
-		"semi;colon&and=equals.txt":     "semi-colon-and-equals.txt",
+		"name.with.many.dots.png":        "name.with.many.dots.png",
+		"semi;colon&and=equals.txt":      "semi-colon-and-equals.txt",
 	}
 	for in, want := range cases {
 		if got := sanitizeFilename(in); got != want {
