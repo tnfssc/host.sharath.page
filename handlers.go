@@ -27,6 +27,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /robots.txt", s.handleRobots)
+	mux.HandleFunc("GET /favicon.svg", s.handleFavicon)
 	mux.HandleFunc("GET /", s.handleRoot)
 	mux.HandleFunc("POST /api/tokens", s.handleMintToken)
 	mux.HandleFunc("PUT /upload", s.requireAuth(s.handleUploadRaw))
@@ -69,12 +70,25 @@ func (s *Server) handleRobots(w http.ResponseWriter, _ *http.Request) {
 	_, _ = io.WriteString(w, "User-agent: *\nAllow: /$\nDisallow: /f/\nDisallow: /upload\nDisallow: /api/\nDisallow: /healthz\n")
 }
 
+func (s *Server) handleFavicon(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=604800")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = io.WriteString(w, faviconSVG)
+}
+
+const faviconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<rect width="64" height="64" rx="15" fill="#121419"/>
+<path d="M18 16v32M46 16v32M18 32h28" fill="none" stroke="#a3e635" stroke-width="9" stroke-linecap="round"/>
+</svg>`
+
 const homePage = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="A fast, private-by-default temporary file host for trusted tools and agents.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <title>host — temporary file sharing</title>
   <style>
     :root{color-scheme:dark;--bg:#0b0c0f;--panel:#121419;--line:#252832;--text:#f4f4f5;--muted:#9ca3af;--accent:#a3e635;--code:#181b21}
