@@ -1,0 +1,33 @@
+# host.sharath.page — temporary file host.
+#
+# Expose it however you like (cloudflared, Caddy, nginx). One caveat:
+# Cloudflare's proxy (orange cloud / tunnel) caps request bodies at 100 MB on
+# free plans, so point uploads at a grey-cloud DNS record or the direct
+# host:port if you need multi-GB files. Downloads through Cloudflare are fine.
+
+services:
+  host:
+    build: .
+    image: host.sharath.page:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8080"
+    environment:
+      ADDR: ":8080"
+      DATA_DIR: /data
+      BASE_URL: ${BASE_URL:?set BASE_URL in .env}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      DEFAULT_TTL: ${DEFAULT_TTL:-72h}
+      MAX_TTL: ${MAX_TTL:-7d}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-5368709120}
+    volumes:
+      - data:/data
+    healthcheck:
+      test: ["CMD", "/host", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  data:

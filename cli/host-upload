@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# host-upload — upload a file to host.sharath.page and print its URL.
+#
+# Setup (on any machine/agent):
+#   export HOST_URL=https://host.sharath.page
+#   export HOST_TOKEN=<jwt>   # mint one on the server: host mint --name mymachine
+#
+# Usage:
+#   host-upload ./recording.mp4          # default server TTL (72h)
+#   host-upload ./recording.mp4 12h      # custom TTL (Go duration or Nd)
+#   url=$(host-upload frame.png)         # capture the link
+set -euo pipefail
+
+file="${1:?usage: host-upload <file> [ttl]}"
+ttl="${2:-}"
+
+[ -f "$file" ] || { echo "host-upload: no such file: $file" >&2; exit 1; }
+: "${HOST_URL:?set HOST_URL (e.g. https://host.sharath.page)}"
+: "${HOST_TOKEN:?set HOST_TOKEN (mint one with: host mint --name <name>)}"
+
+# Pre-sanitize the name so it needs no URL-encoding; the server sanitizes too.
+name=$(basename -- "$file" | tr -c 'A-Za-z0-9._-' '-' | tr -s '-' | sed 's/^[-.]*//; s/[-.]*$//')
+[ -n "$name" ] || name="file"
+
+url="${HOST_URL%/}/upload/${name}?format=text"
+[ -n "$ttl" ] && url="${url}&ttl=${ttl}"
+
+curl -fsS -T "$file" -H "Authorization: Bearer ${HOST_TOKEN}" "$url"
+echo
