@@ -30,6 +30,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /robots.txt", s.handleRobots)
 	mux.HandleFunc("GET /favicon.png", s.handleFavicon)
 	mux.HandleFunc("GET /logo.png", s.handleLogo)
+	mux.HandleFunc("GET /tokens.css", s.handleTokensCSS)
+	mux.HandleFunc("GET /home.css", s.handleHomeCSS)
+	mux.HandleFunc("GET /home.js", s.handleHomeJS)
 	mux.HandleFunc("GET /", s.handleRoot)
 	mux.HandleFunc("POST /api/tokens", s.handleMintToken)
 	mux.HandleFunc("PUT /upload", s.requireAuth(s.handleUploadRaw))
@@ -61,7 +64,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = io.WriteString(w, homePage)
@@ -80,6 +83,25 @@ func (s *Server) handleLogo(w http.ResponseWriter, _ *http.Request) {
 	serveBrandPNG(w, logoPNG)
 }
 
+func (s *Server) handleTokensCSS(w http.ResponseWriter, _ *http.Request) {
+	serveStatic(w, "text/css; charset=utf-8", tokensCSS)
+}
+
+func (s *Server) handleHomeCSS(w http.ResponseWriter, _ *http.Request) {
+	serveStatic(w, "text/css; charset=utf-8", homeCSS)
+}
+
+func (s *Server) handleHomeJS(w http.ResponseWriter, _ *http.Request) {
+	serveStatic(w, "text/javascript; charset=utf-8", homeJS)
+}
+
+func serveStatic(w http.ResponseWriter, contentType string, data []byte) {
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(data)
+}
+
 func serveBrandPNG(w http.ResponseWriter, image []byte) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "public, max-age=604800")
@@ -93,76 +115,148 @@ var faviconPNG []byte
 //go:embed public/logo.png
 var logoPNG []byte
 
+//go:embed tokens.css
+var tokensCSS []byte
+
+//go:embed public/home.css
+var homeCSS []byte
+
+//go:embed public/home.js
+var homeJS []byte
+
 const homePage = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="A fast, private-by-default temporary file host for trusted tools and agents.">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="description" content="A small self-hosted temporary file host for agent artifacts, recordings, logs, and reports.">
   <link rel="icon" href="/favicon.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&amp;family=Plus+Jakarta+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/home.css">
   <title>host — files in, links out</title>
-  <style>
-    :root{color-scheme:dark;--bg:#08090b;--panel:#101115;--panel-2:#15171c;--line:#292c34;--line-soft:#1c1e24;--text:#f7f7f8;--muted:#989ba5;--faint:#666a75;--accent:#c4f042;--violet:#9b87f5;--mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}
-    *{box-sizing:border-box}
-    html{background:var(--bg);scroll-behavior:smooth}
-    body{margin:0;min-height:100vh;overflow-x:hidden;background:radial-gradient(circle at 78% 18%,rgba(155,135,245,.13),transparent 28rem),radial-gradient(circle at 15% 70%,rgba(196,240,66,.07),transparent 24rem),var(--bg);color:var(--text);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    body:before{position:fixed;inset:0;z-index:-1;content:"";background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:56px 56px;mask-image:linear-gradient(to bottom,black,transparent 85%)}
-    a{color:inherit}a:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
-    .shell{width:min(1120px,calc(100% - 40px));margin:auto}
-    header{display:flex;align-items:center;justify-content:space-between;height:88px;border-bottom:1px solid var(--line-soft)}
-    .brand{display:flex;align-items:center;gap:11px;font:650 14px/1 var(--mono);letter-spacing:-.02em;text-decoration:none}.logo{width:34px;height:34px}.brand span{color:var(--muted)}
-    .status{display:flex;align-items:center;gap:9px;color:var(--muted);font:12px/1 var(--mono);text-decoration:none}.status-dot{width:7px;height:7px;border-radius:99px;background:var(--accent);box-shadow:0 0 16px rgba(196,240,66,.8)}
-    main{padding:clamp(72px,10vw,130px) 0 56px}
-    .hero{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr);align-items:center;gap:clamp(48px,8vw,108px)}
-    .kicker{display:flex;align-items:center;gap:10px;margin:0 0 24px;color:var(--accent);font:600 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase}.kicker:before{width:28px;height:1px;background:currentColor;content:""}
-    h1{max-width:700px;margin:0;font-size:clamp(56px,8vw,96px);font-weight:610;line-height:.92;letter-spacing:-.072em}h1 em{color:var(--muted);font-style:normal}
-    .lead{max-width:590px;margin:30px 0 0;color:var(--muted);font-size:clamp(17px,2vw,20px);line-height:1.65}.lead strong{color:var(--text);font-weight:520}
-    .signals{display:flex;flex-wrap:wrap;gap:9px;margin-top:30px}.signal{padding:7px 10px;border:1px solid var(--line);border-radius:99px;color:#b8bbc4;background:rgba(16,17,21,.65);font:11px/1 var(--mono)}
-    .terminal{position:relative;border:1px solid #30333d;border-radius:18px;background:rgba(16,17,21,.94);box-shadow:0 30px 100px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.02) inset;transform:rotate(1deg)}
-    .terminal:before{position:absolute;inset:-1px;z-index:-1;border-radius:18px;background:linear-gradient(135deg,rgba(196,240,66,.35),transparent 32%,transparent 70%,rgba(155,135,245,.35));content:"";filter:blur(16px);opacity:.35}
-    .terminal-bar{display:flex;align-items:center;justify-content:space-between;padding:15px 17px;border-bottom:1px solid var(--line)}.traffic{display:flex;gap:6px}.traffic i{display:block;width:7px;height:7px;border-radius:50%;background:#3a3d46}.traffic i:first-child{background:var(--accent)}.terminal-label{color:var(--faint);font:10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase}
-    pre{min-height:236px;margin:0;overflow:auto;padding:26px 24px;color:#d8dae0;font:13px/1.85 var(--mono);white-space:pre-wrap;word-break:break-word}.prompt{color:var(--accent)}.flag{color:var(--violet)}.dim{color:#707480}.value{color:#f4f4f5}
-    .result{display:flex;align-items:center;gap:11px;margin:0 15px 15px;padding:13px 14px;border:1px solid var(--line);border-radius:10px;background:#0b0c0f;color:#cfd1d7;font:11px/1.4 var(--mono);overflow:hidden}.result-arrow{color:var(--accent)}.result-url{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .features{display:grid;grid-template-columns:repeat(3,1fr);margin-top:clamp(84px,12vw,138px);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-    .feature{position:relative;min-height:220px;padding:32px}.feature+ .feature{border-left:1px solid var(--line)}.number{display:block;margin-bottom:54px;color:var(--faint);font:11px/1 var(--mono)}.feature h2{margin:0 0 9px;font-size:17px;font-weight:560;letter-spacing:-.02em}.feature p{max-width:260px;margin:0;color:var(--muted);font-size:14px;line-height:1.55}.feature:after{position:absolute;top:34px;right:32px;width:8px;height:8px;border:1px solid var(--faint);content:"";transform:rotate(45deg)}
-    footer{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:32px 0 44px;color:var(--faint);font:11px/1.5 var(--mono)}.warning{color:#8d9099}
-    @media(max-width:820px){.hero{grid-template-columns:1fr}.terminal{max-width:620px;transform:none}.features{grid-template-columns:1fr}.feature{min-height:auto}.feature+ .feature{border-top:1px solid var(--line);border-left:0}.number{margin-bottom:30px}}
-    @media(max-width:520px){.shell{width:min(100% - 28px,1120px)}header{height:72px}.brand span{display:none}main{padding-top:58px}h1{font-size:clamp(50px,17vw,72px)}.signals{gap:7px}.terminal{border-radius:14px}pre{min-height:220px;padding:22px 18px;font-size:12px}.features{margin-top:78px}.feature{padding:28px 20px}.feature:after{right:22px}footer{align-items:flex-start;flex-direction:column}}
-    @media(prefers-reduced-motion:no-preference){.terminal{animation:arrive .7s cubic-bezier(.2,.8,.2,1) both}@keyframes arrive{from{opacity:0;transform:translateY(18px) rotate(1deg)}to{opacity:1;transform:translateY(0) rotate(1deg)}}}
-  </style>
 </head>
 <body>
-  <div class="shell">
-    <header>
-      <a class="brand" href="/" aria-label="host.sharath.page home"><img class="logo" src="/logo.png" alt=""><b>host</b><span>/ sharath.page</span></a>
-      <a class="status" href="/healthz"><span class="status-dot"></span>systems nominal</a>
-    </header>
-    <main>
-      <section class="hero" aria-labelledby="hero-title">
-        <div>
-          <p class="kicker">Agent-native file relay</p>
-          <h1 id="hero-title">Upload once.<br><em>Share anywhere.</em></h1>
-          <p class="lead">A fast temporary home for <strong>recordings, reports, logs, and artifacts.</strong> Authenticated on the way in. Effortless on the way out.</p>
-          <div class="signals" aria-label="Service properties">
-            <span class="signal">JWT protected</span><span class="signal">streaming I/O</span><span class="signal">auto-expiring</span><span class="signal">range requests</span>
+  <header class="nav">
+    <div class="nav__inner shell">
+      <a class="brand" href="/" aria-label="host.sharath.page home">
+        <img class="brand__logo" src="/logo.png" width="32" height="32" alt="">
+        <span>host</span><span class="brand__suffix">/ sharath.page</span>
+      </a>
+      <button class="search-trigger" id="command-trigger" type="button" aria-haspopup="dialog" aria-controls="command-palette">
+        <span class="search-trigger__icon" aria-hidden="true"></span>
+        <span class="search-trigger__label">Poke around</span>
+        <kbd>⌘ K</kbd>
+      </button>
+      <a class="github-link" href="https://github.com/tnfssc/host.sharath.page">GitHub ↗</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero shell" aria-labelledby="hero-title">
+      <div class="hero__copy">
+        <p class="eyebrow">Tiny personal file relay</p>
+        <h1 id="hero-title">Files in. Links out. Nice.</h1>
+        <p class="hero__lede">A little self-hosted stopover for recordings, reports, logs, and anything else that should only visit for a while.</p>
+        <div class="hero__actions">
+          <a class="action" href="https://github.com/tnfssc/host.sharath.page">View source ↗</a>
+          <a class="text-link" href="https://github.com/tnfssc/host.sharath.page#quick-start">Read the setup →</a>
+        </div>
+      </div>
+
+      <figure class="command" aria-labelledby="upload-caption">
+        <span class="upload-mark" aria-hidden="true"></span>
+        <figcaption class="command__meta" id="upload-caption"><span>Upload</span><span class="command__status">a link pops out</span></figcaption>
+        <pre><code><span class="command__prompt">$</span> <span class="command__verb">curl</span> <span class="command__flag">-fsS -T</span> recording.mp4 \
+  <span class="command__flag">-H</span> "Authorization: Bearer $HOST_TOKEN" \
+  "$HOST_URL/upload/recording.mp4?ttl=3d&amp;format=text"
+
+<span class="command__result">→</span> <span class="command__url">https://host.sharath.page/f/a8K2q/recording.mp4</span></code></pre>
+      </figure>
+    </section>
+
+    <section class="workflow" aria-labelledby="workflow-title">
+      <div class="shell">
+        <header class="workflow__head">
+          <div>
+            <p class="eyebrow">The whole workflow</p>
+            <h2 id="workflow-title">Nothing between the file and its link.</h2>
           </div>
-        </div>
-        <div class="terminal" aria-label="Upload example">
-          <div class="terminal-bar"><span class="traffic"><i></i><i></i><i></i></span><span class="terminal-label">~/artifacts</span></div>
-          <pre><code><span class="prompt">❯</span> curl <span class="flag">-T</span> report.html \
-  <span class="flag">-H</span> <span class="value">"Authorization: Bearer $HOST_TOKEN"</span> \
-  <span class="value">"https://host.sharath.page/upload/report.html?ttl=3d&amp;format=text"</span></code></pre>
-          <div class="result"><span class="result-arrow">→</span><span class="result-url">https://host.sharath.page/f/a8K2q/report.html</span></div>
-        </div>
-      </section>
-      <section class="features" aria-label="Features">
-        <article class="feature"><span class="number">01 / STREAM</span><h2>No waiting room.</h2><p>Large files move directly to disk instead of collecting in application memory.</p></article>
-        <article class="feature"><span class="number">02 / EXPIRE</span><h2>Gone on schedule.</h2><p>Every link gets a lifetime. The janitor removes it automatically when time is up.</p></article>
-        <article class="feature"><span class="number">03 / PREVIEW</span><h2>Open, don't download.</h2><p>Videos seek, reports render, and browser-friendly files display right where they land.</p></article>
-      </section>
-    </main>
-    <footer><span>host.sharath.page · private infrastructure</span><span class="warning">Public by link — never upload secrets</span></footer>
-  </div>
+        </header>
+        <ol class="steps">
+          <li class="step">
+            <span class="step__number">01</span>
+            <div><h3>Stream it.</h3><p>The request body moves directly to disk instead of collecting in application memory.</p></div>
+          </li>
+          <li class="step">
+            <span class="step__number">02</span>
+            <div><h3>Open it.</h3><p>Range requests keep videos seekable, while browser-friendly files render inline.</p></div>
+          </li>
+          <li class="step">
+            <span class="step__number">03</span>
+            <div><h3>Let it expire.</h3><p>Every upload has a lifetime. The janitor removes the file and its metadata on schedule.</p></div>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="specs shell" aria-labelledby="specs-title">
+      <header class="section-head">
+        <h2 id="specs-title">Known limits. No mystery layer.</h2>
+        <p>The defaults are visible in the repository and configurable through environment variables.</p>
+      </header>
+      <dl class="spec-list">
+        <div class="spec-row"><dt>Default lifetime</dt><dd><span data-count="72">72</span> hours</dd><p>Override per upload with a Go duration or day string.</p></div>
+        <div class="spec-row"><dt>Maximum lifetime</dt><dd><span data-count="7">7</span> days</dd><p>Longer values clamp to the configured maximum.</p></div>
+        <div class="spec-row"><dt>Default upload limit</dt><dd><span data-count="5">5</span> GiB</dd><p>Uploads stream to disk; reverse proxies may impose smaller limits.</p></div>
+        <div class="spec-row"><dt>Public identifier</dt><dd><span data-count="5">5</span> characters</dd><p>Downloads are public to anyone holding the unguessable link.</p></div>
+        <div class="spec-row"><dt>Runtime modules</dt><dd><span data-count="0">0</span></dd><p>The server uses the Go standard library and ships in a distroless image.</p></div>
+      </dl>
+    </section>
+
+    <section class="repo shell" aria-labelledby="repo-title">
+      <div>
+        <h2 id="repo-title">Curious? Lift the lid.</h2>
+        <p>Setup, endpoints, configuration, deployment notes, and the security model all live with the code. No mysterious machinery.</p>
+      </div>
+      <a class="text-link" href="https://github.com/tnfssc/host.sharath.page">Check GitHub ↗</a>
+    </section>
+  </main>
+
+  <footer class="footer" aria-label="Footer">
+    <div class="footer__track" aria-hidden="true">
+      <span>FILES IN · LINKS OUT · GONE ON SCHEDULE ·</span>
+      <span>FILES IN · LINKS OUT · GONE ON SCHEDULE ·</span>
+      <span>FILES IN · LINKS OUT · GONE ON SCHEDULE ·</span>
+      <span>FILES IN · LINKS OUT · GONE ON SCHEDULE ·</span>
+    </div>
+    <div class="footer__meta shell">
+      <span>host.sharath.page · personal infrastructure · MIT</span>
+      <a href="/healthz">Service status</a>
+    </div>
+  </footer>
+
+  <dialog class="palette" id="command-palette" aria-labelledby="command-label">
+    <div class="palette__header">
+      <label>
+        <span class="palette__label" id="command-label">Go to</span>
+        <input class="palette__input" id="command-input" type="search" autocomplete="off" placeholder="README, security, status…">
+      </label>
+      <button class="palette__close" id="command-close" type="button" aria-label="Close command palette">Esc</button>
+    </div>
+    <div class="palette__results">
+      <p class="palette__group">Project</p>
+      <a class="palette__item is-active" href="https://github.com/tnfssc/host.sharath.page"><span>Repository</span><span>GitHub ↗</span></a>
+      <a class="palette__item" href="https://github.com/tnfssc/host.sharath.page#quick-start"><span>Quick start</span><span>README ↗</span></a>
+      <a class="palette__item" href="https://github.com/tnfssc/host.sharath.page#security-model"><span>Security model</span><span>README ↗</span></a>
+      <a class="palette__item" href="https://github.com/tnfssc/host.sharath.page/blob/main/LICENSE"><span>MIT license</span><span>GitHub ↗</span></a>
+      <p class="palette__group">Service</p>
+      <a class="palette__item" href="/healthz"><span>Service status</span><span>Local</span></a>
+      <p class="palette__empty" id="command-empty" hidden>No matching destination.</p>
+    </div>
+  </dialog>
+  <script src="/home.js" defer></script>
 </body>
 </html>`
 

@@ -19,8 +19,33 @@ func TestHomePage(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("content type = %q", ct)
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "Upload once.") || !strings.Contains(body, "curl") || !strings.Contains(body, "/logo.png") {
+	if body := rec.Body.String(); !strings.Contains(body, "Files in. Links out. Nice.") || !strings.Contains(body, "curl") || !strings.Contains(body, "github.com/tnfssc/host.sharath.page") || !strings.Contains(body, "/logo.png") {
 		t.Error("home page is missing expected content")
+	}
+}
+
+func TestHomeAssets(t *testing.T) {
+	wants := map[string]string{
+		"/tokens.css": "text/css",
+		"/home.css":   "text/css",
+		"/home.js":    "text/javascript",
+	}
+	for path, wantType := range wants {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			(&Server{}).routes().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, wantType) {
+				t.Errorf("content type = %q, want prefix %q", ct, wantType)
+			}
+			if rec.Body.Len() == 0 {
+				t.Error("asset body is empty")
+			}
+		})
 	}
 }
 
