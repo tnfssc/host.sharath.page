@@ -75,14 +75,27 @@ func randomID() (string, error) {
 	return b.String(), nil
 }
 
-// createDir reserves a fresh collision-free ID directory.
-func (s *Store) createDir() (id, dir string, err error) {
+// tenantDir returns the storage root for a tenant. The legacy tenant ("")
+// keeps the pre-multitenancy layout with files directly under the data dir.
+func (s *Store) tenantDir(tenant string) string {
+	if tenant == legacyTenant {
+		return s.dir
+	}
+	return filepath.Join(s.dir, tenantDirName, tenant)
+}
+
+// createDir reserves a fresh collision-free ID directory for a tenant.
+func (s *Store) createDir(tenant string) (id, dir string, err error) {
+	base := s.tenantDir(tenant)
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return "", "", err
+	}
 	for range 16 {
 		id, err = randomID()
 		if err != nil {
 			return "", "", err
 		}
-		dir = filepath.Join(s.dir, id)
+		dir = filepath.Join(base, id)
 		if err = os.Mkdir(dir, 0o755); err == nil {
 			return id, dir, nil
 		}
@@ -144,8 +157,12 @@ func (s *Store) saveMeta(dir string, m *Meta) error {
 	return os.WriteFile(filepath.Join(dir, metaName), data, 0o644)
 }
 
-func (s *Store) Load(id string) (*Meta, error) {
-	data, err := os.ReadFile(filepath.Join(s.dir, id, metaName))
+func (s *Store) Load(tenant, id string) (*Meta, error) {
+	return s.loadFrom(filepath.Join(s.tenantDir(tenant), id))
+}
+
+func (s *Store) loadFrom(dir string) (*Meta, error) {
+	data, err := os.ReadFile(filepath.Join(dir, metaName))
 	if err != nil {
 		return nil, err
 	}
@@ -156,14 +173,38 @@ func (s *Store) Load(id string) (*Meta, error) {
 	return &m, nil
 }
 
-func (s *Store) BlobPath(id string) string { return filepath.Join(s.dir, id, blobName) }
+func (s *Store) BlobPath(tenant, id string) string {
+	return filepath.Join(s.tenantDir(tenant), id, blobName)
+}
 
-func (s *Store) Delete(id string) { _ = os.RemoveAll(filepath.Join(s.dir, id)) }
+func (s *Store) Delete(tenant, id string) {
+	_ = os.RemoveAll(filepath.Join(s.tenantDir(tenant), id))
+}
+
+// DeleteTenant removes all of a tenant's files.
+func (s *Store) DeleteTenant(tenant string) {
+	if tenant != legacyTenant {
+		_ = os.RemoveAll(s.tenantDir(tenant))
+	}
+}
 
 // Sweep removes expired files and orphaned directories (failed uploads whose
-// newest entry is older than orphanGrace).
+// newest entry is older than orphanGrace) across every tenant.
 func (s *Store) Sweep(now time.Time) {
-	entries, err := os.ReadDir(s.dir)
+	s.sweepDir(s.dir, now)
+	tenants, err := os.ReadDir(filepath.Join(s.dir, tenantDirName))
+	if err != nil {
+		return
+	}
+	for _, e := range tenants {
+		if e.IsDir() && validTenantName(e.Name()) {
+			s.sweepDir(filepath.Join(s.dir, tenantDirName, e.Name()), now)
+		}
+	}
+}
+
+func (s *Store) sweepDir(root string, now time.Time) {
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return
 	}
@@ -171,8 +212,8 @@ func (s *Store) Sweep(now time.Time) {
 		if !e.IsDir() || !validID(e.Name()) {
 			continue
 		}
-		dir := filepath.Join(s.dir, e.Name())
-		meta, err := s.Load(e.Name())
+		dir := filepath.Join(root, e.Name())
+		meta, err := s.loadFrom(dir)
 		if err == nil {
 			if meta.Expired(now) {
 				_ = os.RemoveAll(dir)

@@ -1,3 +1,3 @@
-module host.sharath.page
+module hoard.sharath.page
 
 go 1.25
