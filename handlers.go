@@ -16,13 +16,17 @@ import (
 )
 
 type Server struct {
-	cfg   Config
-	store *Store
+	cfg     Config
+	store   *Store
+	tenants *TenantRegistry
 }
 
 type ctxKey int
 
-const ctxSub ctxKey = iota
+const (
+	ctxSub ctxKey = iota
+	ctxTenant
+)
 
 func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
@@ -34,12 +38,24 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /home.css", s.handleHomeCSS)
 	mux.HandleFunc("GET /home.js", s.handleHomeJS)
 	mux.HandleFunc("GET /", s.handleRoot)
+	// Legacy single-tenant routes, backed by the JWT_SECRET env var.
 	mux.HandleFunc("POST /api/tokens", s.handleMintToken)
 	mux.HandleFunc("PUT /upload", s.requireAuth(s.handleUploadRaw))
 	mux.HandleFunc("PUT /upload/{filename}", s.requireAuth(s.handleUploadRaw))
 	mux.HandleFunc("POST /upload", s.requireAuth(s.handleUploadMultipart))
 	mux.HandleFunc("GET /f/{id}", s.handleServe)
 	mux.HandleFunc("GET /f/{id}/{filename...}", s.handleServe)
+	// Tenant-scoped routes.
+	mux.HandleFunc("POST /t/{tenant}/api/tokens", s.handleMintTenantToken)
+	mux.HandleFunc("PUT /t/{tenant}/upload", s.requireTenantAuth(s.handleUploadRaw))
+	mux.HandleFunc("PUT /t/{tenant}/upload/{filename}", s.requireTenantAuth(s.handleUploadRaw))
+	mux.HandleFunc("POST /t/{tenant}/upload", s.requireTenantAuth(s.handleUploadMultipart))
+	mux.HandleFunc("GET /t/{tenant}/f/{id}", s.handleServe)
+	mux.HandleFunc("GET /t/{tenant}/f/{id}/{filename...}", s.handleServe)
+	// Root-admin tenant management.
+	mux.HandleFunc("POST /api/tenants", s.requireRootAdmin(s.handleCreateTenant))
+	mux.HandleFunc("GET /api/tenants", s.requireRootAdmin(s.handleListTenants))
+	mux.HandleFunc("DELETE /api/tenants/{tenant}", s.requireRootAdmin(s.handleDeleteTenant))
 	return mux
 }
 
@@ -72,7 +88,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRobots(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = io.WriteString(w, "User-agent: *\nAllow: /$\nDisallow: /f/\nDisallow: /upload\nDisallow: /api/\nDisallow: /healthz\n")
+	_, _ = io.WriteString(w, "User-agent: *\nAllow: /$\nDisallow: /f/\nDisallow: /t/\nDisallow: /upload\nDisallow: /api/\nDisallow: /healthz\n")
 }
 
 func (s *Server) handleFavicon(w http.ResponseWriter, _ *http.Request) {
@@ -135,21 +151,21 @@ const homePage = `<!doctype html>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&amp;family=Plus+Jakarta+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/home.css">
-  <title>host — files in, links out</title>
+  <title>hoard — files in, links out</title>
 </head>
 <body>
   <header class="nav">
     <div class="nav__inner shell">
-      <a class="brand" href="/" aria-label="host.sharath.page home">
+      <a class="brand" href="/" aria-label="hoard.sharath.page home">
         <img class="brand__logo" src="/logo.png" width="32" height="32" alt="">
-        <span>host</span><span class="brand__suffix">/ sharath.page</span>
+        <span>hoard</span><span class="brand__suffix">/ sharath.page</span>
       </a>
       <button class="search-trigger" id="command-trigger" type="button" aria-haspopup="dialog" aria-controls="command-palette">
         <span class="search-trigger__icon" aria-hidden="true"></span>
         <span class="search-trigger__label">Poke around</span>
         <kbd>⌘ K</kbd>
       </button>
-      <a class="github-link" href="https://github.com/tnfssc/host.sharath.page">GitHub ↗</a>
+      <a class="github-link" href="https://github.com/tnfssc/hoard.sharath.page">GitHub ↗</a>
     </div>
   </header>
 
@@ -160,8 +176,8 @@ const homePage = `<!doctype html>
         <h1 id="hero-title">Files in. Links out. Nice.</h1>
         <p class="hero__lede">A little self-hosted stopover for recordings, reports, logs, and anything else that should only visit for a while.</p>
         <div class="hero__actions">
-          <a class="action" href="https://github.com/tnfssc/host.sharath.page">View source ↗</a>
-          <a class="text-link" href="https://github.com/tnfssc/host.sharath.page#quick-start">Read the setup →</a>
+          <a class="action" href="https://github.com/tnfssc/hoard.sharath.page">View source ↗</a>
+          <a class="text-link" href="https://github.com/tnfssc/hoard.sharath.page#quick-start">Read the setup →</a>
         </div>
       </div>
 
@@ -169,10 +185,10 @@ const homePage = `<!doctype html>
         <span class="upload-mark" aria-hidden="true"></span>
         <figcaption class="command__meta" id="upload-caption"><span>Upload</span><span class="command__status">a link pops out</span></figcaption>
         <pre><code><span class="command__prompt">$</span> <span class="command__verb">curl</span> <span class="command__flag">-fsS -T</span> recording.mp4 \
-  <span class="command__flag">-H</span> "Authorization: Bearer $HOST_TOKEN" \
-  "$HOST_URL/upload/recording.mp4?ttl=3d&amp;format=text"
+  <span class="command__flag">-H</span> "Authorization: Bearer $HOARD_TOKEN" \
+  "$HOARD_URL/t/$HOARD_TENANT/upload/recording.mp4?ttl=3d&amp;format=text"
 
-<span class="command__result">→</span> <span class="command__url">https://host.sharath.page/f/a8K2q/recording.mp4</span></code></pre>
+<span class="command__result">→</span> <span class="command__url">https://hoard.sharath.page/t/myteam/f/a8K2q/recording.mp4</span></code></pre>
       </figure>
     </section>
 
@@ -220,7 +236,7 @@ const homePage = `<!doctype html>
         <h2 id="repo-title">Curious? Lift the lid.</h2>
         <p>Setup, endpoints, configuration, deployment notes, and the security model all live with the code. No mysterious machinery.</p>
       </div>
-      <a class="text-link" href="https://github.com/tnfssc/host.sharath.page">Check GitHub ↗</a>
+      <a class="text-link" href="https://github.com/tnfssc/hoard.sharath.page">Check GitHub ↗</a>
     </section>
   </main>
 
@@ -232,7 +248,7 @@ const homePage = `<!doctype html>
       <span>FILES IN · LINKS OUT · GONE ON SCHEDULE ·</span>
     </div>
     <div class="footer__meta shell">
-      <span>host.sharath.page · personal infrastructure · MIT</span>
+      <span>hoard.sharath.page · personal infrastructure · MIT</span>
       <a href="/healthz">Service status</a>
     </div>
   </footer>
@@ -247,10 +263,10 @@ const homePage = `<!doctype html>
     </div>
     <div class="palette__results">
       <p class="palette__group">Project</p>
-      <a class="palette__item is-active" href="https://github.com/tnfssc/host.sharath.page"><span>Repository</span><span>GitHub ↗</span></a>
-      <a class="palette__item" href="https://github.com/tnfssc/host.sharath.page#quick-start"><span>Quick start</span><span>README ↗</span></a>
-      <a class="palette__item" href="https://github.com/tnfssc/host.sharath.page#security-model"><span>Security model</span><span>README ↗</span></a>
-      <a class="palette__item" href="https://github.com/tnfssc/host.sharath.page/blob/main/LICENSE"><span>MIT license</span><span>GitHub ↗</span></a>
+      <a class="palette__item is-active" href="https://github.com/tnfssc/hoard.sharath.page"><span>Repository</span><span>GitHub ↗</span></a>
+      <a class="palette__item" href="https://github.com/tnfssc/hoard.sharath.page#quick-start"><span>Quick start</span><span>README ↗</span></a>
+      <a class="palette__item" href="https://github.com/tnfssc/hoard.sharath.page#security-model"><span>Security model</span><span>README ↗</span></a>
+      <a class="palette__item" href="https://github.com/tnfssc/hoard.sharath.page/blob/main/LICENSE"><span>MIT license</span><span>GitHub ↗</span></a>
       <p class="palette__group">Service</p>
       <a class="palette__item" href="/healthz"><span>Service status</span><span>Local</span></a>
       <p class="palette__empty" id="command-empty" hidden>No matching destination.</p>
@@ -260,22 +276,54 @@ const homePage = `<!doctype html>
 </body>
 </html>`
 
-// requireAuth enforces a valid HS256 JWT bearer token and records its subject.
+// bearerSubject extracts and verifies the bearer token against secret.
+func bearerSubject(w http.ResponseWriter, r *http.Request, secret []byte) (string, bool) {
+	h := r.Header.Get("Authorization")
+	token, ok := strings.CutPrefix(h, "Bearer ")
+	if !ok || token == "" {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="hoard"`)
+		writeErr(w, http.StatusUnauthorized, "missing bearer token")
+		return "", false
+	}
+	sub, err := verifyJWT(secret, token)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "invalid or expired token")
+		return "", false
+	}
+	return sub, true
+}
+
+// requireAuth enforces a valid HS256 JWT against the legacy global secret.
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		h := r.Header.Get("Authorization")
-		token, ok := strings.CutPrefix(h, "Bearer ")
-		if !ok || token == "" {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="host"`)
-			writeErr(w, http.StatusUnauthorized, "missing bearer token")
+		if len(s.cfg.JWTSecret) < 16 {
+			writeErr(w, http.StatusNotFound, "legacy tenant disabled: JWT_SECRET not set")
 			return
 		}
-		sub, err := verifyJWT(s.cfg.JWTSecret, token)
-		if err != nil {
-			writeErr(w, http.StatusUnauthorized, "invalid or expired token")
+		sub, ok := bearerSubject(w, r, s.cfg.JWTSecret)
+		if !ok {
 			return
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxSub, sub)))
+	}
+}
+
+// requireTenantAuth resolves the {tenant} path value and enforces a JWT
+// signed with that tenant's own secret.
+func (s *Server) requireTenantAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		t, ok := s.tenants.Get(r.PathValue("tenant"))
+		if !ok {
+			writeErr(w, http.StatusNotFound, "unknown tenant")
+			return
+		}
+		sub, ok := bearerSubject(w, r, []byte(t.JWTSecret))
+		if !ok {
+			return
+		}
+		ctx := context.WithValue(r.Context(), ctxSub, sub)
+		ctx = context.WithValue(ctx, ctxTenant, t)
+		next(w, r.WithContext(ctx))
 	}
 }
 
@@ -286,13 +334,53 @@ func uploader(r *http.Request) string {
 	return ""
 }
 
-// handleMintToken mints JWTs. Protected by the shared admin token.
+// requestTenant returns the authenticated tenant, or nil for the legacy tenant.
+func requestTenant(r *http.Request) *Tenant {
+	if t, ok := r.Context().Value(ctxTenant).(*Tenant); ok {
+		return t
+	}
+	return nil
+}
+
+// tenantNameOf maps a request tenant to its storage/URL name.
+func tenantNameOf(t *Tenant) string {
+	if t == nil {
+		return legacyTenant
+	}
+	return t.Name
+}
+
+// handleMintToken mints legacy-tenant JWTs. Protected by the root admin token.
 // POST /api/tokens  X-Admin-Token: <secret>  {"name": "laptop", "days": 365}
 func (s *Server) handleMintToken(w http.ResponseWriter, r *http.Request) {
-	if !constantTimeEqual(r.Header.Get("X-Admin-Token"), s.cfg.AdminToken) {
+	if len(s.cfg.JWTSecret) < 16 {
+		writeErr(w, http.StatusNotFound, "legacy tenant disabled: JWT_SECRET not set")
+		return
+	}
+	if !s.isRootAdmin(r) {
 		writeErr(w, http.StatusUnauthorized, "bad admin token")
 		return
 	}
+	s.mintToken(w, r, s.cfg.JWTSecret)
+}
+
+// handleMintTenantToken mints JWTs for one tenant. Protected by the root
+// admin token or the tenant's own admin token.
+// POST /t/{tenant}/api/tokens  X-Admin-Token: <secret>  {"name": "ci", "days": 90}
+func (s *Server) handleMintTenantToken(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.tenants.Get(r.PathValue("tenant"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "unknown tenant")
+		return
+	}
+	if !s.isRootAdmin(r) && !constantTimeEqual(r.Header.Get("X-Admin-Token"), t.AdminToken) {
+		writeErr(w, http.StatusUnauthorized, "bad admin token")
+		return
+	}
+	s.mintToken(w, r, []byte(t.JWTSecret))
+}
+
+func (s *Server) mintToken(w http.ResponseWriter, r *http.Request, secret []byte) {
 	var req struct {
 		Name string `json:"name"`
 		Days int    `json:"days"`
@@ -307,7 +395,7 @@ func (s *Server) handleMintToken(w http.ResponseWriter, r *http.Request) {
 	if req.Days <= 0 {
 		req.Days = 365
 	}
-	tok, exp, err := mintJWT(s.cfg.JWTSecret, req.Name, time.Duration(req.Days)*24*time.Hour)
+	tok, exp, err := mintJWT(secret, req.Name, time.Duration(req.Days)*24*time.Hour)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not mint token")
 		return
@@ -318,6 +406,95 @@ func (s *Server) handleMintToken(w http.ResponseWriter, r *http.Request) {
 		"name":       req.Name,
 		"expires_at": exp.UTC().Format(time.RFC3339),
 	})
+}
+
+func (s *Server) isRootAdmin(r *http.Request) bool {
+	return constantTimeEqual(r.Header.Get("X-Admin-Token"), s.cfg.AdminToken)
+}
+
+func (s *Server) requireRootAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.isRootAdmin(r) {
+			writeErr(w, http.StatusUnauthorized, "bad admin token")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// handleCreateTenant registers a tenant and returns its generated secrets.
+// The secrets are only shown in this response.
+// POST /api/tenants  X-Admin-Token: <root>  {"name": "acme", "default_ttl": "72h", "max_ttl": "7d", "max_upload_bytes": 1073741824}
+func (s *Server) handleCreateTenant(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name           string `json:"name"`
+		DefaultTTL     string `json:"default_ttl"`
+		MaxTTL         string `json:"max_ttl"`
+		MaxUploadBytes int64  `json:"max_upload_bytes"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	var defTTL, maxTTL time.Duration
+	var err error
+	if req.DefaultTTL != "" {
+		if defTTL, err = parseDuration(req.DefaultTTL); err != nil || defTTL <= 0 {
+			writeErr(w, http.StatusBadRequest, "invalid default_ttl")
+			return
+		}
+	}
+	if req.MaxTTL != "" {
+		if maxTTL, err = parseDuration(req.MaxTTL); err != nil || maxTTL <= 0 {
+			writeErr(w, http.StatusBadRequest, "invalid max_ttl")
+			return
+		}
+	}
+	if req.MaxUploadBytes < 0 {
+		writeErr(w, http.StatusBadRequest, "invalid max_upload_bytes")
+		return
+	}
+	t, err := s.tenants.Create(req.Name, defTTL, maxTTL, req.MaxUploadBytes)
+	if errors.Is(err, errTenantName) {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if errors.Is(err, errTenantExists) {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		log.Printf("create tenant %q: %v", req.Name, err)
+		writeErr(w, http.StatusInternalServerError, "could not create tenant")
+		return
+	}
+	log.Printf("tenant %q created", t.Name)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"tenant":      t.public(),
+		"jwt_secret":  t.JWTSecret,
+		"admin_token": t.AdminToken,
+		"base_path":   tenantPrefix(t.Name),
+	})
+}
+
+func (s *Server) handleListTenants(w http.ResponseWriter, _ *http.Request) {
+	list := s.tenants.List()
+	out := make([]publicTenant, 0, len(list))
+	for _, t := range list {
+		out = append(out, t.public())
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenants": out})
+}
+
+func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("tenant")
+	if err := s.tenants.Delete(name); err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	s.store.DeleteTenant(name)
+	log.Printf("tenant %q deleted (files removed)", name)
+	writeJSON(w, http.StatusOK, map[string]string{"deleted": name})
 }
 
 // handleUploadRaw accepts a raw request body (curl -T file) with the filename
@@ -351,14 +528,18 @@ type uploadResponse struct {
 }
 
 func (s *Server) saveUpload(w http.ResponseWriter, r *http.Request, filename string, body io.Reader) {
-	id, dir, err := s.store.createDir()
+	t := requestTenant(r)
+	tenant := tenantNameOf(t)
+	defTTL, maxTTL, maxBytes := t.effectiveLimits(s.cfg)
+
+	id, dir, err := s.store.createDir(tenant)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not allocate storage")
 		return
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 
-	size, head, err := writeBlob(dir, body, s.cfg.MaxUploadBytes)
+	size, head, err := writeBlob(dir, body, maxBytes)
 	if err != nil {
 		cleanup()
 		if errors.Is(err, errTooLarge) {
@@ -370,7 +551,7 @@ func (s *Server) saveUpload(w http.ResponseWriter, r *http.Request, filename str
 		return
 	}
 
-	ttl := resolveTTL(r.URL.Query().Get("ttl"), s.cfg.DefaultTTL, s.cfg.MaxTTL)
+	ttl := resolveTTL(r.URL.Query().Get("ttl"), defTTL, maxTTL)
 	now := time.Now()
 	meta := &Meta{
 		ID:          id,
@@ -387,8 +568,8 @@ func (s *Server) saveUpload(w http.ResponseWriter, r *http.Request, filename str
 		return
 	}
 
-	fileURL := s.publicBase(r) + "/f/" + id + "/" + url.PathEscape(filename)
-	log.Printf("uploaded %s (%s, %d bytes, ttl %s) by %q", id, filename, size, ttl, uploader(r))
+	fileURL := s.publicBase(r) + tenantPrefix(tenant) + "/f/" + id + "/" + url.PathEscape(filename)
+	log.Printf("uploaded %s (%s, %d bytes, ttl %s) by %q", tenantPrefix(tenant)+"/f/"+id, filename, size, ttl, uploader(r))
 
 	if r.URL.Query().Get("format") == "text" {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -406,13 +587,22 @@ func (s *Server) saveUpload(w http.ResponseWriter, r *http.Request, filename str
 }
 
 // handleServe serves stored files inline with Range support (video seeking).
+// Tenant routes resolve the tenant from the path; unknown tenants 404.
 func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
+	tenant := legacyTenant
+	if name := r.PathValue("tenant"); name != "" {
+		if _, ok := s.tenants.Get(name); !ok {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		tenant = name
+	}
 	id := r.PathValue("id")
 	if !validID(id) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	meta, err := s.store.Load(id)
+	meta, err := s.store.Load(tenant, id)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			writeErr(w, http.StatusNotFound, "not found")
@@ -422,12 +612,12 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if meta.Expired(time.Now()) {
-		s.store.Delete(id)
+		s.store.Delete(tenant, id)
 		writeErr(w, http.StatusGone, "file expired")
 		return
 	}
 
-	f, err := os.Open(s.store.BlobPath(id))
+	f, err := os.Open(s.store.BlobPath(tenant, id))
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "not found")
 		return

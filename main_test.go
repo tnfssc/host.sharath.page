@@ -19,7 +19,7 @@ func TestHomePage(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("content type = %q", ct)
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "Files in. Links out. Nice.") || !strings.Contains(body, "curl") || !strings.Contains(body, "github.com/tnfssc/host.sharath.page") || !strings.Contains(body, "/logo.png") {
+	if body := rec.Body.String(); !strings.Contains(body, "Files in. Links out. Nice.") || !strings.Contains(body, "curl") || !strings.Contains(body, "github.com/tnfssc/hoard.sharath.page") || !strings.Contains(body, "/logo.png") {
 		t.Error("home page is missing expected content")
 	}
 }

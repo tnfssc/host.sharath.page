@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# hoard-upload — upload a file to hoard.sharath.page and print its URL.
+#
+# Setup (on any machine/agent):
+#   export HOARD_URL=https://hoard.sharath.page
+#   export HOARD_TOKEN=<jwt>     # mint one on the server: hoard mint --name mymachine
+#   export HOARD_TENANT=acme     # optional: upload into a tenant namespace
+#
+# Usage:
+#   hoard-upload ./recording.mp4          # default server TTL (72h)
+#   hoard-upload ./recording.mp4 12h      # custom TTL (Go duration or Nd)
+#   url=$(hoard-upload frame.png)         # capture the link
+set -euo pipefail
+
+file="${1:?usage: hoard-upload <file> [ttl]}"
+ttl="${2:-}"
+
+[ -f "$file" ] || { echo "hoard-upload: no such file: $file" >&2; exit 1; }
+: "${HOARD_URL:?set HOARD_URL (e.g. https://hoard.sharath.page)}"
+: "${HOARD_TOKEN:?set HOARD_TOKEN (mint one with: hoard mint --name <name>)}"
+
+# Pre-sanitize the name so it needs no URL-encoding; the server sanitizes too.
+name=$(basename -- "$file" | tr -c 'A-Za-z0-9._-' '-' | tr -s '-' | sed 's/^[-.]*//; s/[-.]*$//')
+[ -n "$name" ] || name="file"
+
+base="${HOARD_URL%/}"
+[ -n "${HOARD_TENANT:-}" ] && base="${base}/t/${HOARD_TENANT}"
+
+url="${base}/upload/${name}?format=text"
+[ -n "$ttl" ] && url="${url}&ttl=${ttl}"
+
+curl -fsS -T "$file" -H "Authorization: Bearer ${HOARD_TOKEN}" "$url"
+echo

@@ -1,4 +1,4 @@
-# host.sharath.page — temporary file host.
+# hoard.sharath.page — temporary file host.
 #
 # Expose it however you like (cloudflared, Caddy, nginx). One caveat:
 # Cloudflare's proxy (orange cloud / tunnel) caps request bodies at 100 MB on
@@ -6,9 +6,9 @@
 # host:port if you need multi-GB files. Downloads through Cloudflare are fine.
 
 services:
-  host:
+  hoard:
     build: .
-    image: host.sharath.page:latest
+    image: hoard.sharath.page:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:8787:8080"
@@ -17,14 +17,15 @@ services:
       DATA_DIR: /data
       BASE_URL: ${BASE_URL:?set BASE_URL in .env}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      # Optional: enables the legacy single-tenant routes (/upload, /f/...).
+      JWT_SECRET: ${JWT_SECRET:-}
       DEFAULT_TTL: ${DEFAULT_TTL:-72h}
       MAX_TTL: ${MAX_TTL:-7d}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-5368709120}
     volumes:
       - data:/data
     healthcheck:
-      test: ["CMD", "/host", "healthcheck"]
+      test: ["CMD", "/hoard", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
